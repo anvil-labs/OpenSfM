@@ -23,5 +23,6 @@ def create_default_dataset_context(
 
 if __name__ == "__main__":
     commands.command_runner(
-        commands.opensfm_commands, create_default_dataset_context, dataset_choices=["opensfm"]
+        commands.opensfm_commands, create_default_dataset_context, dataset_choices=[
+            "opensfm"]
     )

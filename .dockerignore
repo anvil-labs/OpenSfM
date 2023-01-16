@@ -16,6 +16,7 @@
 !setup.cfg
 !setup.py
 !viewer
+!temp.py
 
 # Picking exceptions
 doc/build

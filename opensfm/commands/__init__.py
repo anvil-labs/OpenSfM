@@ -22,6 +22,7 @@ from . import (
     reconstruct,
     reconstruct_from_prior,
     undistort,
+    temp_command,
 )
 from .command_runner import command_runner
 
@@ -50,4 +51,5 @@ opensfm_commands = [
     extend_reconstruction,
     create_submodels,
     align_submodels,
+    temp_command,
 ]
