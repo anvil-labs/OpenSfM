@@ -49,3 +49,9 @@ python3 viewer/server.py -d data/odm_data_aukerman -p 8000
 ## Notes
 
 - The `commands` package is not really being used but you can execute custom commands in there with `./bin/opensfm test_command` (for example).
+
+- Run the command below to generate the 3D map from the provided images.
+
+```
+docker run --rm -it -v $(pwd)/anvillabs/OpenSfM-original/data/odm_data_aukerman:/images opensfm bin/opensfm_run_all /images
+```
