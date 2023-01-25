@@ -13,6 +13,8 @@ import numpy as np
 from typing import Union
 import xml.etree.ElementTree as ET
 
+import json
+
 import pdb
 # import cv2
 
@@ -74,7 +76,8 @@ def generate_gps_data(
         for image in images:
             pixel_coordinates = [(image_x_pixel, image_y_pixel)]
             if image_x_pixel == None and image_y_pixel == None:
-                pixel_coordinates = [(i, i) for i in range(0, 3000, 5)]
+                # pixel_coordinates = [(i, i) for i in range(0, 100, 5)]
+                pixel_coordinates = [(i, i) for i in range(0, 3000, 500)]
 
             results_for_image = []
 
@@ -91,6 +94,7 @@ def generate_gps_data(
             results_for_mission[image] = results_for_image
 
         create_kml(data.data_path + "/coordinates.kml", results_for_mission)
+        create_json(data.data_path + "/coordinates.json", results_for_mission)
 
 
 def calculate_coordinates(
@@ -99,22 +103,48 @@ def calculate_coordinates(
     image: str,
     x_pixel: int,
     y_pixel: int,
-):
+) -> dict:
     results = {}
 
     shot = reconstruction.shots[image]
     pose = shot.pose
     cam = shot.camera
 
+    pdb.set_trace()  # TEMP
+
+    # Get the real-life coordinates of the center-point of the camera
     p1 = shot.pose.get_origin()
+
+    # TODO: verify that p1 is actually the center of a given image
+    #       p1_lla should be where in the world the camera taking
+    #       the picture existed - we can confirm this by looking at
+    #       an image and guessing where p1_lla will be plotted
+    # TODO: verify p1 is different for different images
+
+    # This code is unique to the Anvil implementation.
+    p1_lla = reconstruction.reference.to_lla(*p1)
+    results['p1_lla'] = p1_lla
+
+    # This code:
+    # - orients pixel location from the center of the picture instead of the top-left
+    # - divides by focal length to convert from pixel distance to actual distance from center
     p2 = cam.pixel_to_normalized_coordinates(
         [x_pixel, y_pixel]
     )
 
+    # The next three lines of code finds the IRL location of objects _from_ the camera's
+    # coordinate system. by using camera/shot parameters (called "K") and cv2.undistortPoints
     bearing = cam.pixel_bearing(p2)
     scale = 1 / bearing[2]
     bearing = scale * bearing
+    # At this point it's just [x,y,1]
 
+    # Bearing is now a vector from camera center to real-world object location in
+    # camera coordinates
+
+    # Next, convert the bearing from the camera coordinate system to the world
+    # coordinate system.
+    # This is done by taking the inverse of the camera's pose and applying it to the bearing.
     p2 = pose.inverse().transform(bearing)
     p2_lla = reconstruction.reference.to_lla(*p2)
     results['p2_lla'] = p2_lla
@@ -136,7 +166,7 @@ def calculate_coordinates(
     # to the line defined by the origin of the camera and the point on the
     # image defined by the pixel coordinates (x, y).
     closest_point_in_cloud = point_cloud.points[np.argmin(res)]
-    results['closest_point_in_cloud'] = closest_point_in_cloud
+    results['closest_point_in_cloud'] = closest_point_in_cloud.tolist()
 
     closest_point_in_cloud_lla = reconstruction.reference.to_lla(
         *closest_point_in_cloud,
@@ -149,7 +179,7 @@ def calculate_coordinates(
     r = shot.pose.get_rotation_matrix().T
     p2 = shot.pose.inverse().transform(bearing)
     pos_bearing_scale = r.dot(p2)
-    results['pos_bearing_scale'] = pos_bearing_scale
+    results['pos_bearing_scale'] = pos_bearing_scale.tolist()
 
     pos_bearing_scale_lla = reconstruction.reference.to_lla(*pos_bearing_scale)
     results['pos_bearing_scale_lla'] = pos_bearing_scale_lla
@@ -159,14 +189,14 @@ def calculate_coordinates(
     bearing = cam.pixel_bearing(p2)
     r = shot.pose.get_rotation_matrix().T
     pos_bearing = r.dot(bearing)
-    results['pos_bearing'] = pos_bearing
+    results['pos_bearing'] = pos_bearing.tolist()
 
     pos_bearing_lla = reconstruction.reference.to_lla(*pos_bearing)
     results['pos_bearing_lla'] = pos_bearing_lla
 
     p1 = shot.pose.get_origin()
     pos_origin = r.dot(p1)
-    results['pos_origin'] = pos_origin
+    results['pos_origin'] = pos_origin.tolist()
 
     pos_origin_lla = reconstruction.reference.to_lla(*pos_origin)
     results['pos_origin_lla'] = pos_origin_lla
@@ -174,26 +204,33 @@ def calculate_coordinates(
     return results
 
 
-def create_kml(path: str, results_for_mission: dict):
+def create_kml(path: str, results_for_mission: dict) -> None:
     kml = ET.Element("kml")
     document = ET.SubElement(kml, "Document")
 
     for image in results_for_mission:
-        for results_for_image in results_for_mission[image]:
-            for results_for_pixel in results_for_image:
-                coordinates = results_for_pixel['closest_point_in_cloud_lla']
+        for results_for_pixel in results_for_mission[image]:
+            llas = [
+                'p1_lla',
+                'p2_lla',
+                'closest_point_in_cloud_lla',
+                'pos_bearing_scale_lla',
+                'pos_bearing_lla',
+                'pos_origin_lla',
+            ]
+
+            for lla in llas:
+                coordinates = results_for_pixel[lla]
                 placemark = ET.SubElement(document, "Placemark")
                 text = image.replace('.jpg', '') + '_' \
-                    + results_for_pixel['x_pixel'] + '_' \
-                    + results_for_pixel['y_pixel']
+                    + str(results_for_pixel['x_pixel']) + '_' \
+                    + str(results_for_pixel['y_pixel']) + lla
                 ET.SubElement(placemark, "name").text = text
                 point = ET.SubElement(placemark, "Point")
                 ET.SubElement(
                     point,
                     "coordinates",
                 ).text = f"{coordinates[1]},{coordinates[0]},{coordinates[2]}"
-
-    pdb.set_trace()
 
     tree = ET.ElementTree(kml)
     tree.write(
@@ -204,7 +241,13 @@ def create_kml(path: str, results_for_mission: dict):
     )
 
 
+def create_json(path: str, results_for_mission: dict) -> None:
+    json_object = json.dumps(results_for_mission, indent=4)
+    with open(path, "w") as outfile:
+        outfile.write(json_object)
+
+
 generate_gps_data(
     'odm_data_aukerman',
-    # 'DSC00232.JPG',
+    'DSC00232.JPG.jpg',
 )
